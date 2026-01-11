@@ -162,6 +162,7 @@ action:
                   - service: "{{ notify_service }}"
                     data:
                       message: "{{ notify_message }}"
+                    continue_on_error: true
 
           - service: light.turn_off
             target: !input lights_target
@@ -193,3 +194,5 @@ action:
             target: !input lights_target
             data:
               transition: "{{ transition_seconds | int(1) }}"
+
+
