@@ -71,7 +71,7 @@ blueprint:
 
     notify_service:
       name: Notify service (optional)
-      description: I need an example
+      description: notify mobile phone
       default: ""
       selector:
         text:
@@ -85,7 +85,6 @@ blueprint:
 mode: restart
 
 variables:
-  door_sensor: !input door_sensor
   occupancy_sensors: !input occupancy_sensors
   night_mode: !input night_mode
   day_brightness: !input day_brightness
@@ -95,10 +94,6 @@ variables:
   transition_seconds: !input transition_seconds
   notify_service: !input notify_service
   notify_message: !input notify_message
-
-  is_occupied: >-
-    {% set occ = expand(occupancy_sensors) | selectattr('state','eq','on') | list | count %}
-    {{ occ > 0 }}
 
 trigger:
   - platform: state
@@ -135,7 +130,7 @@ action:
               seconds: "{{ (states(door_open_timeout_minutes) | int(5)) * 60 }}"
 
           - condition: state
-            entity_id: "{{ door_sensor }}"
+            entity_id: !input door_sensor
             state: "on"
 
           # Notify if configured
@@ -173,7 +168,7 @@ action:
 
           # Re-check door still closed and still empty
           - condition: state
-            entity_id: "{{ door_sensor }}"
+            entity_id: !input door_sensor
             state: "off"
 
           - condition: template
