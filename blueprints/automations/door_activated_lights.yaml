@@ -1,9 +1,9 @@
 blueprint:
-  name: Room lights - door + night mode + optional occupancy
+  name: Room lights - door + night mode + optional occupancy (fixed)
   description: >
-    Turns on lights when a door opens using day/night brightness (night_mode).
-    Turns off after door closes when room is empty for a delay.
-    If door stays open too long, notifies and turns off lights if room is empty.
+    Door opens -> lights on (night_mode brightness).
+    Door closes -> turn off after delay; if occupancy sensors exist, keep on until empty.
+    Door left open -> notify + turn off only if empty.
   domain: automation
 
   input:
@@ -48,7 +48,7 @@ blueprint:
           domain: input_number
 
     off_delay_minutes:
-      name: Turn-off delay after room becomes empty (minutes)
+      name: Turn-off delay after door closes / room becomes empty (minutes)
       selector:
         entity:
           domain: input_number
@@ -71,7 +71,7 @@ blueprint:
 
     notify_service:
       name: Notify service (optional)
-      description: notify mobile phone
+      description: Example notify.mobile_app_your_phone. Leave blank to disable notifications.
       default: ""
       selector:
         text:
@@ -94,6 +94,16 @@ variables:
   transition_seconds: !input transition_seconds
   notify_service: !input notify_service
   notify_message: !input notify_message
+
+  has_occupancy: >-
+    {{ occupancy_sensors is not none and (occupancy_sensors | count) > 0 }}
+
+  is_empty: >-
+    {% if occupancy_sensors is none or (occupancy_sensors | count) == 0 %}
+      true
+    {% else %}
+      {{ (expand(occupancy_sensors) | selectattr('state','eq','on') | list | count) == 0 }}
+    {% endif %}
 
 trigger:
   - platform: state
@@ -141,40 +151,35 @@ action:
                     data:
                       message: "{{ notify_message }}"
 
-          # If occupancy sensors exist and someone is present, DON'T turn off.
-          # If empty (or no occupancy sensors configured), turn off.
+          # Only turn off if the room is empty (or no occupancy sensors configured)
           - condition: template
-            value_template: >-
-              {% set occ = expand(occupancy_sensors) | selectattr('state','eq','on') | list | count %}
-              {{ occ == 0 }}
+            value_template: "{{ is_empty }}"
 
           - service: light.turn_off
             target: !input lights_target
             data:
               transition: "{{ transition_seconds | int(1) }}"
 
-      # --- Door closed: wait until empty, then wait off_delay, then turn off
+      # --- Door closed: if occupancy configured, wait until empty; then delay; then off
       - conditions:
           - condition: trigger
             id: door_closed
         sequence:
-          # Wait until room is empty (or instantly true if no occupancy sensors configured)
-          - wait_template: >-
-              {% set occ = expand(occupancy_sensors) | selectattr('state','eq','on') | list | count %}
-              {{ occ == 0 }}
+          - choose:
+              - conditions: "{{ has_occupancy }}"
+                sequence:
+                  - wait_template: "{{ is_empty }}"
 
           - delay:
               seconds: "{{ (states(off_delay_minutes) | float(0)) * 60 }}"
 
-          # Re-check door still closed and still empty
+          # Re-check door still closed and empty
           - condition: state
             entity_id: !input door_sensor
             state: "off"
 
           - condition: template
-            value_template: >-
-              {% set occ = expand(occupancy_sensors) | selectattr('state','eq','on') | list | count %}
-              {{ occ == 0 }}
+            value_template: "{{ is_empty }}"
 
           - service: light.turn_off
             target: !input lights_target
