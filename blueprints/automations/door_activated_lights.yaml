@@ -1,5 +1,5 @@
 blueprint:
-  name: Room lights - door + night mode + optional occupancy (spec v0.9.5)
+  name: Room lights - door + night mode + optional occupancy (spec v0.9.6)
   description: >
     Door opens -> lights on (night_mode brightness).
     Door closes -> if no occupancy sensors: turn off immediately.
@@ -29,6 +29,17 @@ blueprint:
         entity:
           domain: binary_sensor
           multiple: true
+
+    occupancy_off_delay_seconds:
+      name: Occupancy off delay (seconds)
+      description: Turn off when occupancy has been OFF for this long (door must be closed).
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 600
+          step: 5
+          unit_of_measurement: s
 
     night_mode:
       name: Night mode boolean
@@ -82,7 +93,8 @@ mode: restart
 
 variables:
   door_sensor: !input door_sensor
-  occupancy_sensors: !input occupancy_sensors
+  occupancy_sensors: !input occupancy_sensor
+  occupancy_off_delay_seconds: !input occupancy_off_delay_seconds
   night_mode: !input night_mode
   day_brightness: !input day_brightness
   night_brightness: !input night_brightness
@@ -109,6 +121,13 @@ trigger:
     entity_id: !input occupancy_sensors
     to: "on"
     id: occupancy_on
+
+  - platform: state
+    entity_id: !input occupancy_sensors
+    to: "off"
+    for:
+      seconds: !input occupancy_off_delay_seconds
+    id: occupancy_off
 
 action:
   - choose:
@@ -210,6 +229,25 @@ action:
                 {% else %}
                   {{ states(day_brightness) | int(80) }}
                 {% endif %}
+              transition: "{{ transition_seconds | int(1) }}"
+
+      # ---------------------------
+      # Occupancy cleared: if door is closed and ALL occupancy sensors are off -> turn off lights
+      # ---------------------------
+      - conditions:
+          - condition: trigger
+            id: occupancy_off
+          - condition: state
+            entity_id: !input door_sensor
+            state: "off"   # door closed
+          - condition: template
+            value_template: >-
+              {% set ids = occupancy_sensors if occupancy_sensors is not none else [] %}
+              {{ (expand(ids) | selectattr('state','eq','on') | list | count) == 0 }}
+        sequence:
+          - service: light.turn_off
+            target: !input lights_target
+            data:
               transition: "{{ transition_seconds | int(1) }}"
 
       # ---------------------------
