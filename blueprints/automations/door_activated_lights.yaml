@@ -1,5 +1,5 @@
 blueprint:
-  name: Room lights - door + night mode + optional occupancy (empty-only notify)
+  name: Room lights - door + night mode + optional occupancy (empty-only notify v.1.2)
   description: >
     Door opens -> lights on (night_mode brightness).
     Door closes -> if occupancy sensors exist, keep on until empty, then off after delay.
