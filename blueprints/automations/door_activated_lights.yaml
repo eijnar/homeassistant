@@ -1,9 +1,10 @@
 blueprint:
-  name: Room lights - door + night mode + optional occupancy (empty-only notify v.1.2)
+  name: Room lights - door + night mode + optional occupancy (spec v1.3)
   description: >
     Door opens -> lights on (night_mode brightness).
-    Door closes -> if occupancy sensors exist, keep on until empty, then off after delay.
-    Door left open -> after timeout, ONLY notify + turn off if room is empty.
+    Door closes -> if no occupancy sensors: turn off immediately.
+                 if occupancy sensors: turn off as soon as occupancy becomes false.
+    Door left open -> after timeout: ONLY notify + turn off when room is empty and door is still open.
   domain: automation
 
   input:
@@ -47,14 +48,9 @@ blueprint:
         entity:
           domain: input_number
 
-    off_delay_minutes:
-      name: Turn-off delay after door closes / room becomes empty (minutes)
-      selector:
-        entity:
-          domain: input_number
-
     door_open_timeout_minutes:
-      name: Door open timeout before taking action (minutes)
+      name: Door open timeout (minutes)
+      description: Only applies while the door remains open.
       selector:
         entity:
           domain: input_number
@@ -71,7 +67,7 @@ blueprint:
 
     notify_service:
       name: Notify service (optional)
-      description: Example notify.mobile_app_your_phone. Leave blank to disable notifications.
+      description: Example script.notify_household_when_home or notify.mobile_app_your_phone. Leave blank to disable.
       default: ""
       selector:
         text:
@@ -90,7 +86,6 @@ variables:
   night_mode: !input night_mode
   day_brightness: !input day_brightness
   night_brightness: !input night_brightness
-  off_delay_minutes: !input off_delay_minutes
   door_open_timeout_minutes: !input door_open_timeout_minutes
   transition_seconds: !input transition_seconds
   notify_service: !input notify_service
@@ -120,7 +115,9 @@ trigger:
 action:
   - choose:
 
-      # --- Door opened: turn on lights (night-aware), then handle "left open while empty"
+      # ---------------------------
+      # Door opened: turn on lights, then handle "door left open" timeout
+      # ---------------------------
       - conditions:
           - condition: trigger
             id: door_opened
@@ -136,6 +133,7 @@ action:
                 {% endif %}
               transition: "{{ transition_seconds | int(1) }}"
 
+          # Wait up to X minutes for the door to close. If it closes earlier, stop (door_closed branch will run).
           - wait_for_trigger:
               - platform: state
                 entity_id: !input door_sensor
@@ -144,22 +142,25 @@ action:
               seconds: "{{ (states(door_open_timeout_minutes) | int(5)) * 60 }}"
             continue_on_timeout: true
 
-          # If door is no longer open, stop here
+          # If door closed before timeout, do nothing here.
           - condition: template
-            value_template: "{{ is_state(door_sensor, 'on') }}"
+            value_template: "{{ wait.trigger is none }}"
 
-          # If we have occupancy sensors, wait until the room becomes empty OR door closes.
-          # (No notifications while occupied.)
+          # Timeout happened; only proceed if the door is STILL open.
+          - condition: state
+            entity_id: !input door_sensor
+            state: "on"
+
+          # If we have occupancy sensors, wait until empty OR door closes (no notify while occupied).
           - choose:
               - conditions: "{{ has_occupancy }}"
                 sequence:
                   - wait_template: "{{ is_empty or is_state(door_sensor, 'off') }}"
 
-          # Now only act if door is still open AND room is empty
+          # Now only act if door STILL open AND room is empty
           - condition: template
             value_template: "{{ is_state(door_sensor, 'on') and is_empty }}"
 
-          # Notify (only in the empty+door-open case)
           - choose:
               - conditions: "{{ (notify_service | length) > 0 }}"
                 sequence:
@@ -173,30 +174,26 @@ action:
             data:
               transition: "{{ transition_seconds | int(1) }}"
 
-      # --- Door closed: wait until empty (if occupancy configured), then delay, then turn off
+      # ---------------------------
+      # Door closed: turn off immediately if no occupancy.
+      # If occupancy exists: turn off as soon as occupancy becomes false.
+      # ---------------------------
       - conditions:
           - condition: trigger
             id: door_closed
         sequence:
           - choose:
+              # With occupancy sensors: wait until empty, then turn off
               - conditions: "{{ has_occupancy }}"
                 sequence:
                   - wait_template: "{{ is_empty }}"
-
-          - delay:
-              seconds: "{{ (states(off_delay_minutes) | float(0)) * 60 }}"
-
-          # Re-check door still closed and empty
-          - condition: state
-            entity_id: !input door_sensor
-            state: "off"
-
-          - condition: template
-            value_template: "{{ is_empty }}"
-
-          - service: light.turn_off
-            target: !input lights_target
-            data:
-              transition: "{{ transition_seconds | int(1) }}"
-
-
+                  - service: light.turn_off
+                    target: !input lights_target
+                    data:
+                      transition: "{{ transition_seconds | int(1) }}"
+            default:
+              # No occupancy sensors: immediate off
+              - service: light.turn_off
+                target: !input lights_target
+                data:
+                  transition: "{{ transition_seconds | int(1) }}"
