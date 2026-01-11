@@ -1,5 +1,5 @@
 blueprint:
-  name: Room lights - door + night mode + optional occupancy (spec v1.3)
+  name: Room lights - door + night mode + optional occupancy (spec v0.9.1)
   description: >
     Door opens -> lights on (night_mode brightness).
     Door closes -> if no occupancy sensors: turn off immediately.
