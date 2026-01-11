@@ -1,0 +1,187 @@
+blueprint:
+  name: Room lights - door + night mode + optional occupancy
+  description: >
+    Turns on lights when a door opens using day/night brightness (night_mode).
+    Turns off after door closes when room is empty for a delay.
+    If door stays open too long, notifies and turns off lights if room is empty.
+  domain: automation
+
+  input:
+    door_sensor:
+      name: Door sensor
+      selector:
+        entity:
+          domain: binary_sensor
+
+    lights_target:
+      name: Lights to control
+      selector:
+        target:
+          entity:
+            domain: light
+
+    occupancy_sensors:
+      name: Occupancy sensors (optional)
+      description: Add PIR/mmWave later. Leave empty for now.
+      default: []
+      selector:
+        entity:
+          domain: binary_sensor
+          multiple: true
+
+    night_mode:
+      name: Night mode boolean
+      selector:
+        entity:
+          domain: input_boolean
+
+    day_brightness:
+      name: Day brightness helper (%)
+      selector:
+        entity:
+          domain: input_number
+
+    night_brightness:
+      name: Night brightness helper (%)
+      selector:
+        entity:
+          domain: input_number
+
+    off_delay_minutes:
+      name: Turn-off delay after room becomes empty (minutes)
+      selector:
+        entity:
+          domain: input_number
+
+    door_open_timeout_minutes:
+      name: Door open timeout before warning (minutes)
+      selector:
+        entity:
+          domain: input_number
+
+    transition_seconds:
+      name: Transition (seconds)
+      default: 1
+      selector:
+        number:
+          min: 0
+          max: 10
+          step: 1
+          unit_of_measurement: s
+
+    notify_service:
+      name: Notify service (optional)
+      description: Example: notify.mobile_app_your_phone. Leave blank to disable notifications.
+      default: ""
+      selector:
+        text:
+
+    notify_message:
+      name: Notification message
+      default: "Door has been left open."
+      selector:
+        text:
+
+mode: restart
+
+variables:
+  door_sensor: !input door_sensor
+  occupancy_sensors: !input occupancy_sensors
+  night_mode: !input night_mode
+  day_brightness: !input day_brightness
+  night_brightness: !input night_brightness
+  off_delay_minutes: !input off_delay_minutes
+  door_open_timeout_minutes: !input door_open_timeout_minutes
+  transition_seconds: !input transition_seconds
+  notify_service: !input notify_service
+  notify_message: !input notify_message
+
+  is_occupied: >-
+    {% set occ = expand(occupancy_sensors) | selectattr('state','eq','on') | list | count %}
+    {{ occ > 0 }}
+
+trigger:
+  - platform: state
+    entity_id: !input door_sensor
+    to: "on"
+    id: door_opened
+
+  - platform: state
+    entity_id: !input door_sensor
+    to: "off"
+    id: door_closed
+
+action:
+  - choose:
+
+      # --- Door opened: turn on lights (night-aware) + start "door left open" timer
+      - conditions:
+          - condition: trigger
+            id: door_opened
+        sequence:
+          - service: light.turn_on
+            target: !input lights_target
+            data:
+              brightness_pct: >-
+                {% if is_state(night_mode, 'on') %}
+                  {{ states(night_brightness) | int(10) }}
+                {% else %}
+                  {{ states(day_brightness) | int(80) }}
+                {% endif %}
+              transition: "{{ transition_seconds | int(1) }}"
+
+          # Wait X minutes; if door still open, notify.
+          - delay:
+              seconds: "{{ (states(door_open_timeout_minutes) | int(5)) * 60 }}"
+
+          - condition: state
+            entity_id: "{{ door_sensor }}"
+            state: "on"
+
+          # Notify if configured
+          - choose:
+              - conditions: "{{ (notify_service | length) > 0 }}"
+                sequence:
+                  - service: "{{ notify_service }}"
+                    data:
+                      message: "{{ notify_message }}"
+
+          # If occupancy sensors exist and someone is present, DON'T turn off.
+          # If empty (or no occupancy sensors configured), turn off.
+          - condition: template
+            value_template: >-
+              {% set occ = expand(occupancy_sensors) | selectattr('state','eq','on') | list | count %}
+              {{ occ == 0 }}
+
+          - service: light.turn_off
+            target: !input lights_target
+            data:
+              transition: "{{ transition_seconds | int(1) }}"
+
+      # --- Door closed: wait until empty, then wait off_delay, then turn off
+      - conditions:
+          - condition: trigger
+            id: door_closed
+        sequence:
+          # Wait until room is empty (or instantly true if no occupancy sensors configured)
+          - wait_template: >-
+              {% set occ = expand(occupancy_sensors) | selectattr('state','eq','on') | list | count %}
+              {{ occ == 0 }}
+
+          - delay:
+              seconds: "{{ (states(off_delay_minutes) | float(0)) * 60 }}"
+
+          # Re-check door still closed and still empty
+          - condition: state
+            entity_id: "{{ door_sensor }}"
+            state: "off"
+
+          - condition: template
+            value_template: >-
+              {% set occ = expand(occupancy_sensors) | selectattr('state','eq','on') | list | count %}
+              {{ occ == 0 }}
+
+          - service: light.turn_off
+            target: !input lights_target
+            data:
+              transition: "{{ transition_seconds | int(1) }}"
