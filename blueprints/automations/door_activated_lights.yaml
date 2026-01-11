@@ -1,5 +1,5 @@
 blueprint:
-  name: Room lights - door + night mode + optional occupancy (spec v0.9.3)
+  name: Room lights - door + night mode + optional occupancy (spec v0.9.4)
   description: >
     Door opens -> lights on (night_mode brightness).
     Door closes -> if no occupancy sensors: turn off immediately.
@@ -30,19 +30,6 @@ blueprint:
           domain: binary_sensor
           multiple: true
 
-    occupancy_hold_seconds:
-      name: Occupancy hold (seconds)
-      description: >
-        Treat the room as "occupied" for this many seconds after the last motion/presence change.
-        Useful for PIR sensors (motion is not true presence). Set to 0 for mmWave presence sensors.
-      default: 60
-      selector:
-        number:
-          min: 0
-          max: 600
-          step: 5
-          unit_of_measurement: s
-
     night_mode:
       name: Night mode boolean
       selector:
@@ -69,7 +56,7 @@ blueprint:
           domain: input_number
 
     transition_seconds:
-      name: Transition (seconds)
+      name: Light transition (seconds)
       default: 1
       selector:
         number:
@@ -96,7 +83,6 @@ mode: restart
 variables:
   door_sensor: !input door_sensor
   occupancy_sensors: !input occupancy_sensors
-  occupancy_hold_seconds: !input occupancy_hold_seconds
   night_mode: !input night_mode
   day_brightness: !input day_brightness
   night_brightness: !input night_brightness
@@ -162,17 +148,18 @@ action:
           - choose:
               - conditions: "{{ has_occupancy }}"
                 sequence:
-                  - wait_template: >-
-                      {% set hold = occupancy_hold_seconds | int(0) %}
-                      {% set ns = namespace(occ=false) %}
-                      {% for s in expand(occupancy_sensors) %}
-                        {% if s.state == 'on' %}
-                          {% set ns.occ = true %}
-                        {% elif hold > 0 and (as_timestamp(now()) - as_timestamp(s.last_changed)) < hold %}
-                          {% set ns.occ = true %}
-                        {% endif %}
-                      {% endfor %}
-                      {{ (not ns.occ) or is_state(door_sensor, 'off') }}
+                  - choose:
+                      # If already empty, no waiting needed
+                      - conditions: >-
+                          {% set ids = occupancy_sensors if occupancy_sensors is not none else [] %}
+                          {% set occ_on = expand(ids) | selectattr('state','eq','on') | list | count %}
+                          {{ occ_on == 0 }}
+                        sequence: []
+                    default:
+                      - wait_template: >-
+                          {% set ids = occupancy_sensors if occupancy_sensors is not none else [] %}
+                          {% set occ_on = expand(ids) | selectattr('state','eq','on') | list | count %}
+                          {{ occ_on == 0 or is_state(door_sensor, 'off') }}
 
           # Now only act if door STILL open AND room is empty
           - condition: template
@@ -180,17 +167,11 @@ action:
               {% if not has_occupancy %}
                 {{ is_state(door_sensor, 'on') }}
               {% else %}
-                {% set hold = occupancy_hold_seconds | int(0) %}
-                {% set ns = namespace(occ=false) %}
-                {% for s in expand(occupancy_sensors) %}
-                  {% if s.state == 'on' %}
-                    {% set ns.occ = true %}
-                  {% elif hold > 0 and (as_timestamp(now()) - as_timestamp(s.last_changed)) < hold %}
-                    {% set ns.occ = true %}
-                  {% endif %}
-                {% endfor %}
-                {{ is_state(door_sensor, 'on') and (not ns.occ) }}
+                {% set ids = occupancy_sensors if occupancy_sensors is not none else [] %}
+                {% set occ_on = expand(ids) | selectattr('state','eq','on') | list | count %}
+                {{ is_state(door_sensor, 'on') and occ_on == 0 }}
               {% endif %}
+
 
           - choose:
               - conditions: "{{ (notify_service | length) > 0 }}"
@@ -216,17 +197,18 @@ action:
           - choose:
               - conditions: "{{ has_occupancy }}"
                 sequence:
-                  - wait_template: >-
-                      {% set hold = occupancy_hold_seconds | int(0) %}
-                      {% set ns = namespace(occ=false) %}
-                      {% for s in expand(occupancy_sensors) %}
-                        {% if s.state == 'on' %}
-                          {% set ns.occ = true %}
-                        {% elif hold > 0 and (as_timestamp(now()) - as_timestamp(s.last_changed)) < hold %}
-                          {% set ns.occ = true %}
-                        {% endif %}
-                      {% endfor %}
-                      {{ not ns.occ }}
+                  # If already empty, turn off immediately; otherwise wait until empty then off
+                  - choose:
+                      - conditions: >-
+                          {% set ids = occupancy_sensors if occupancy_sensors is not none else [] %}
+                          {% set occ_on = expand(ids) | selectattr('state','eq','on') | list | count %}
+                          {{ occ_on == 0 }}
+                        sequence: []
+                    default:
+                      - wait_template: >-
+                          {% set ids = occupancy_sensors if occupancy_sensors is not none else [] %}
+                          {% set occ_on = expand(ids) | selectattr('state','eq','on') | list | count %}
+                          {{ occ_on == 0 }}
                   - service: light.turn_off
                     target: !input lights_target
                     data:
