@@ -1,5 +1,5 @@
 blueprint:
-  name: Room lights - door + night mode + optional occupancy (spec v0.9.4)
+  name: Room lights - door + night mode + optional occupancy (spec v0.9.5)
   description: >
     Door opens -> lights on (night_mode brightness).
     Door closes -> if no occupancy sensors: turn off immediately.
@@ -105,6 +105,11 @@ trigger:
     to: "off"
     id: door_closed
 
+  - platform: state
+    entity_id: !input occupancy_sensors
+    to: "on"
+    id: occupancy_on
+
 action:
   - choose:
 
@@ -184,6 +189,27 @@ action:
           - service: light.turn_off
             target: !input lights_target
             data:
+              transition: "{{ transition_seconds | int(1) }}"
+
+      # ---------------------------
+      # Occupancy detected: re-light if door is closed
+      # ---------------------------
+      - conditions:
+          - condition: trigger
+            id: occupancy_on
+          - condition: state
+            entity_id: !input door_sensor
+            state: "off"   # door closed
+        sequence:
+          - service: light.turn_on
+            target: !input lights_target
+            data:
+              brightness_pct: >-
+                {% if is_state(night_mode, 'on') %}
+                  {{ states(night_brightness) | int(10) }}
+                {% else %}
+                  {{ states(day_brightness) | int(80) }}
+                {% endif %}
               transition: "{{ transition_seconds | int(1) }}"
 
       # ---------------------------
