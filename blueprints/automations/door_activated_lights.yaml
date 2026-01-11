@@ -1,5 +1,5 @@
 blueprint:
-  name: Room lights - door + night mode + optional occupancy (spec v0.9.1)
+  name: Room lights - door + night mode + optional occupancy (spec v0.9.2)
   description: >
     Door opens -> lights on (night_mode brightness).
     Door closes -> if no occupancy sensors: turn off immediately.
@@ -98,7 +98,7 @@ variables:
     {% if occupancy_sensors is none or (occupancy_sensors | count) == 0 %}
       true
     {% else %}
-      {{ (expand(occupancy_sensors) | selectattr('state','eq','detected') | list | count) == 0 }}
+      {{ (expand(occupancy_sensors) | selectattr('state','eq','on') | list | count) == 0 }}
     {% endif %}
 
 trigger:
