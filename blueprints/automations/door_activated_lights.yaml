@@ -136,9 +136,13 @@ action:
                 {% endif %}
               transition: "{{ transition_seconds | int(1) }}"
 
-          # Wait for the timeout
-          - delay:
+          - wait_for_trigger:
+              - platform: state
+                entity_id: !input door_sensor
+                to: "off"
+            timeout:
               seconds: "{{ (states(door_open_timeout_minutes) | int(5)) * 60 }}"
+            continue_on_timeout: true
 
           # If door is no longer open, stop here
           - condition: template
