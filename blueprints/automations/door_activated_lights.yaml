@@ -216,9 +216,6 @@ action:
       - conditions:
           - condition: trigger
             id: occupancy_on
-          - condition: state
-            entity_id: !input door_sensor
-            state: "off"   # door closed
         sequence:
           - service: light.turn_on
             target: !input lights_target
