@@ -34,8 +34,8 @@ blueprint:
           domain: input_number
 
     evening_flag:
-      name: "Global 'Kvällsläge' flag"
-      description: "input_boolean or binary_sensor. 'on' means evening mode active."
+      name: "Global Kvällsläge flag"
+      description: "input_boolean or binary_sensor. on means evening mode active."
       selector:
         entity: {}
 
