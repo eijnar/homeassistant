@@ -1,40 +1,59 @@
 blueprint:
-  name: Hue Remote (mode+variant) using Area + Labels
+  name: Hue Remote V2 - Mode/Variant scenes via Z2M MQTT (Area + Labels)
   description: >
-    Controls scenes by Mode (Dag/Kväll/Natt) + Variant (01/02/03...) for one area.
-    - on_press: toggle (on -> apply current selection, off -> turn off + reset defaults)
+    Uses Zigbee2MQTT MQTT action payloads (on_press/off_press/up_press/down_press)
+    to control scenes by Mode (Dag/Kväll/Natt) + Variant (01/02/03...).
+    - on_press: toggle (if lights on -> off + reset, else -> set defaults + apply scene)
     - off_press: cycle variant (Hue button)
-    - up_press/down_press: switch mode (no cycling at ends)
-    Requires:
-      - input_select for mode with values: Dag, Kväll, Natt
-      - input_number for variant starting at 1
-      - scenes assigned to the area and labeled with Dag/Kväll/Natt
-      - script.apply_mode_variant_scene_for_area (from earlier)
+    - up_press/down_press: change mode (no cycling) and reset variant to 1
+    Defaults come from global helpers: nattläge > kvällsläge > Dag.
   domain: automation
+
   input:
-    action_entity:
-      name: Remote action entity
-      description: Entity that changes state to on_press/off_press/up_press/down_press
+    mqtt_topic:
+      name: Zigbee2MQTT topic for the remote
+      description: "Usually: zigbee2mqtt/<friendly_name>"
       selector:
-        entity:
-          domain: sensor
+        text: {}
 
     target_area:
-      name: Target area
+      name: Target area (room)
       selector:
         area: {}
 
     mode_helper:
-      name: Mode helper (input_select)
+      name: Room mode helper (input_select: Dag/Kväll/Natt)
       selector:
         entity:
           domain: input_select
 
     variant_helper:
-      name: Variant helper (input_number)
+      name: Room variant helper (input_number)
       selector:
         entity:
           domain: input_number
+
+    evening_flag:
+      name: Global 'Kvällsläge' flag
+      description: "input_boolean or binary_sensor. 'on' means evening mode active."
+      selector:
+        entity: {}
+
+    night_flag:
+      name: Global 'Nattläge' flag
+      description: "input_boolean or binary_sensor. 'on' means night mode active."
+      selector:
+        entity: {}
+
+    default_variant:
+      name: Default variant when (re)starting
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 10
+          step: 1
+          mode: box
 
     transition:
       name: Scene transition (seconds)
@@ -46,109 +65,44 @@ blueprint:
           step: 0.1
           mode: box
 
-    # Defaults on "turn off" (toggle-off)
-    reset_strategy:
-      name: Reset strategy when turning off
-      default: time_of_day
-      selector:
-        select:
-          options:
-            - time_of_day
-            - fixed
-
-    fixed_default_mode:
-      name: Fixed default mode (used if reset_strategy = fixed)
-      default: Kväll
-      selector:
-        select:
-          options:
-            - Natt
-            - Kväll
-            - Dag
-
-    default_variant:
-      name: Default variant on reset
-      default: 1
-      selector:
-        number:
-          min: 1
-          max: 10
-          step: 1
-          mode: box
-
-    day_start_hour:
-      name: Day starts at hour
-      default: 6
-      selector:
-        number:
-          min: 0
-          max: 23
-          step: 1
-          mode: box
-
-    evening_start_hour:
-      name: Evening starts at hour
-      default: 18
-      selector:
-        number:
-          min: 0
-          max: 23
-          step: 1
-          mode: box
-
-    night_start_hour:
-      name: Night starts at hour
-      default: 22
-      selector:
-        number:
-          min: 0
-          max: 23
-          step: 1
-          mode: box
-
 mode: single
 
 trigger:
-  - platform: state
-    entity_id: !input action_entity
+  - platform: mqtt
+    topic: !input mqtt_topic
 
 variables:
   area_id: !input target_area
-  area_name: "{{ area_name(area_id) }}"   # area_name() accepts area_id :contentReference[oaicite:3]{index=3}
+  area_name: "{{ area_name(area_id) }}"
   mode_helper: !input mode_helper
   variant_helper: !input variant_helper
+  evening_flag: !input evening_flag
+  night_flag: !input night_flag
+  default_variant: !input default_variant
   transition: !input transition
 
-  reset_strategy: !input reset_strategy
-  fixed_default_mode: !input fixed_default_mode
-  default_variant: !input default_variant
-  day_start: !input day_start_hour
-  evening_start: !input evening_start_hour
-  night_start: !input night_start_hour
+  # Z2M sends JSON with {"action":"on_press"} etc.
+  act: >-
+    {% set p = trigger.payload_json %}
+    {% if p is mapping and 'action' in p %}
+      {{ p.action }}
+    {% else %}
+      {{ trigger.payload }}
+    {% endif %}
 
-  act: "{{ trigger.to_state.state if trigger.to_state else '' }}"
-
-  # Determine if any light in the area is currently on
+  # Any light on in the area?
   any_lights_on: >-
     {% set lights = area_entities(area_id) | select('match', '^light\\.') | list %}
     {{ (expand(lights) | selectattr('state','eq','on') | list | count) > 0 }}
 
-  # Default mode calculation for time_of_day strategy
-  time_of_day_mode: >-
-    {% set h = now().hour %}
-    {% if h >= night_start or h < day_start %}
-      Natt
-    {% elif h >= day_start and h < evening_start %}
-      Dag
-    {% else %}
-      Kväll
-    {% endif %}
-
+  # Default mode from your global flags
   default_mode: >-
-    {% if reset_strategy == 'fixed' %}
-      {{ fixed_default_mode }}
+    {% if is_state(night_flag, 'on') %}
+      Natt
+    {% elif is_state(evening_flag, 'on') %}
+      Kväll
     {% else %}
-      {{ time_of_day_mode }}
+      Dag
     {% endif %}
 
 action:
@@ -157,7 +111,7 @@ action:
       - conditions: "{{ act == 'on_press' }}"
         sequence:
           - choose:
-              # If lights are on -> turn off + reset defaults
+              # If on -> turn off + reset to defaults
               - conditions: "{{ any_lights_on }}"
                 sequence:
                   - service: light.turn_off
@@ -173,9 +127,20 @@ action:
                       entity_id: "{{ variant_helper }}"
                     data:
                       value: "{{ default_variant }}"
-              # If lights are off -> apply current selection (turns on via scene)
+
+              # If off -> set defaults + apply scene (turns lights on via scene)
               - conditions: "{{ not any_lights_on }}"
                 sequence:
+                  - service: input_select.select_option
+                    target:
+                      entity_id: "{{ mode_helper }}"
+                    data:
+                      option: "{{ default_mode }}"
+                  - service: input_number.set_value
+                    target:
+                      entity_id: "{{ variant_helper }}"
+                    data:
+                      value: "{{ default_variant }}"
                   - service: script.apply_mode_variant_scene_for_area
                     data:
                       area_name: "{{ area_name }}"
@@ -183,7 +148,7 @@ action:
                       variant_helper: "{{ variant_helper }}"
                       transition: "{{ transition }}"
 
-      # off_press = HUE BUTTON = cycle variant (wrap)
+      # off_press (Hue button) = cycle variant within current mode (wrap)
       - conditions: "{{ act == 'off_press' }}"
         sequence:
           - variables:
@@ -214,7 +179,7 @@ action:
                       variant_helper: "{{ variant_helper }}"
                       transition: "{{ transition }}"
 
-      # up_press = switch to BRIGHTER mode (no cycling)
+      # up_press = brighter mode (no cycling)
       - conditions: "{{ act == 'up_press' }}"
         sequence:
           - variables:
@@ -243,7 +208,7 @@ action:
                       variant_helper: "{{ variant_helper }}"
                       transition: "{{ transition }}"
 
-      # down_press = switch to DIMMER mode (no cycling)
+      # down_press = dimmer mode (no cycling)
       - conditions: "{{ act == 'down_press' }}"
         sequence:
           - variables:
