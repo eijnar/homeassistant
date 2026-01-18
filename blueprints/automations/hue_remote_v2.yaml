@@ -22,7 +22,7 @@ blueprint:
         area: {}
 
     mode_helper:
-      name: "Room mode helper (input_select Dag/Kväll/Natt)"
+      name: "Room mode helper"
       selector:
         entity:
           domain: input_select
