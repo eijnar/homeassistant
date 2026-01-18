@@ -1,20 +1,20 @@
 blueprint:
-  name: "Hue Remote V2 - Mode/Variant scenes via Z2M MQTT (Area + Labels) v.0.1"
+  name: "Hue Remote V2 - Mode/Variant (Z2M MQTT device triggers, Area + Labels)"
   description: >
-    Uses Zigbee2MQTT MQTT action payloads (on_press/off_press/up_press/down_press)
-    to control scenes by Mode (Dag/Kväll/Natt) + Variant (01/02/03...).
-    - on_press: toggle (if lights on -> off + reset, else -> set defaults + apply scene)
+    Uses MQTT device triggers discovered via Zigbee2MQTT (type: action, subtype: on_press/off_press/up_press/down_press).
+    - on_press: toggle (if lights on -> turn off + reset defaults; if off -> set defaults + apply scene)
     - off_press: cycle variant (Hue button)
     - up_press/down_press: change mode (no cycling) and reset variant to 1
-    Defaults come from global helpers: nattläge > kvällsläge > Dag.
+    Default mode comes from global helpers: nattläge > kvällsläge > Dag.
   domain: automation
 
   input:
-    mqtt_topic:
-      name: "Zigbee2MQTT topic for the remote"
-      description: "Usually: zigbee2mqtt/<friendly_name>"
+    remote_device:
+      name: "Remote device"
+      description: "Select the Zigbee2MQTT remote device"
       selector:
-        text: {}
+        device:
+          integration: mqtt
 
     target_area:
       name: "Target area (room)"
@@ -22,7 +22,7 @@ blueprint:
         area: {}
 
     mode_helper:
-      name: "Teestings"
+      name: "Room mode helper (input_select: Dag/Kväll/Natt)"
       selector:
         entity:
           domain: input_select
@@ -34,14 +34,12 @@ blueprint:
           domain: input_number
 
     evening_flag:
-      name: "Global Kvällsläge flag"
-      description: "input_boolean or binary_sensor. on means evening mode active."
+      name: "Global 'Kvällsläge' flag"
       selector:
         entity: {}
 
     night_flag:
       name: "Global 'Nattläge' flag"
-      description: "input_boolean or binary_sensor. 'on' means night mode active."
       selector:
         entity: {}
 
@@ -68,8 +66,33 @@ blueprint:
 mode: single
 
 trigger:
-  - platform: mqtt
-    topic: !input mqtt_topic
+  - platform: device
+    domain: mqtt
+    device_id: !input remote_device
+    type: action
+    subtype: on_press
+    id: on_press
+
+  - platform: device
+    domain: mqtt
+    device_id: !input remote_device
+    type: action
+    subtype: off_press
+    id: off_press
+
+  - platform: device
+    domain: mqtt
+    device_id: !input remote_device
+    type: action
+    subtype: up_press
+    id: up_press
+
+  - platform: device
+    domain: mqtt
+    device_id: !input remote_device
+    type: action
+    subtype: down_press
+    id: down_press
 
 variables:
   area_id: !input target_area
@@ -80,14 +103,6 @@ variables:
   night_flag: !input night_flag
   default_variant: !input default_variant
   transition: !input transition
-
-  act: >-
-    {% set p = trigger.payload_json %}
-    {% if p is mapping and 'action' in p %}
-      {{ p.action }}
-    {% else %}
-      {{ trigger.payload }}
-    {% endif %}
 
   any_lights_on: >-
     {% set lights = area_entities(area_id) | select('match', '^light\\.') | list %}
@@ -104,9 +119,11 @@ variables:
 
 action:
   - choose:
-      - conditions: "{{ act == 'on_press' }}"
+      # on_press = TOGGLE
+      - conditions: "{{ trigger.id == 'on_press' }}"
         sequence:
           - choose:
+              # If lights are on -> off + reset defaults
               - conditions: "{{ any_lights_on }}"
                 sequence:
                   - service: light.turn_off
@@ -122,6 +139,8 @@ action:
                       entity_id: "{{ variant_helper }}"
                     data:
                       value: "{{ default_variant }}"
+
+              # If lights are off -> set defaults + apply selection
               - conditions: "{{ not any_lights_on }}"
                 sequence:
                   - service: input_select.select_option
@@ -141,7 +160,8 @@ action:
                       variant_helper: "{{ variant_helper }}"
                       transition: "{{ transition }}"
 
-      - conditions: "{{ act == 'off_press' }}"
+      # off_press = Hue button = cycle variant (wrap)
+      - conditions: "{{ trigger.id == 'off_press' }}"
         sequence:
           - variables:
               mode: "{{ states(mode_helper) }}"
@@ -171,7 +191,8 @@ action:
                       variant_helper: "{{ variant_helper }}"
                       transition: "{{ transition }}"
 
-      - conditions: "{{ act == 'up_press' }}"
+      # up_press = brighter mode (no cycling at ends) + variant=1
+      - conditions: "{{ trigger.id == 'up_press' }}"
         sequence:
           - variables:
               order: ["Natt", "Kväll", "Dag"]
@@ -199,7 +220,8 @@ action:
                       variant_helper: "{{ variant_helper }}"
                       transition: "{{ transition }}"
 
-      - conditions: "{{ act == 'down_press' }}"
+      # down_press = dimmer mode (no cycling at ends) + variant=1
+      - conditions: "{{ trigger.id == 'down_press' }}"
         sequence:
           - variables:
               order: ["Natt", "Kväll", "Dag"]
