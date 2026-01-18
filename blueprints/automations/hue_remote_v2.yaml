@@ -1,5 +1,5 @@
 blueprint:
-  name: "Hue Remote V2 - Mode/Variant scenes via Z2M MQTT (Area + Labels)"
+  name: "Hue Remote V2 - Mode/Variant scenes via Z2M MQTT (Area + Labels) v.0.1"
   description: >
     Uses Zigbee2MQTT MQTT action payloads (on_press/off_press/up_press/down_press)
     to control scenes by Mode (Dag/Kväll/Natt) + Variant (01/02/03...).
@@ -22,7 +22,7 @@ blueprint:
         area: {}
 
     mode_helper:
-      name: "Room mode helper (input_select: Dag/Kväll/Natt)"
+      name: "Teestings"
       selector:
         entity:
           domain: input_select
