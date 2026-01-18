@@ -15,6 +15,7 @@ blueprint:
       selector:
         device:
           integration: mqtt
+          multiple: true
 
     target_area:
       name: "Target area (room)"
