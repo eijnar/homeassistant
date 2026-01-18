@@ -1,5 +1,5 @@
 blueprint:
-  name: Hue Remote V2 - Mode/Variant scenes via Z2M MQTT (Area + Labels)
+  name: "Hue Remote V2 - Mode/Variant scenes via Z2M MQTT (Area + Labels)"
   description: >
     Uses Zigbee2MQTT MQTT action payloads (on_press/off_press/up_press/down_press)
     to control scenes by Mode (Dag/Kväll/Natt) + Variant (01/02/03...).
@@ -11,42 +11,42 @@ blueprint:
 
   input:
     mqtt_topic:
-      name: Zigbee2MQTT topic for the remote
+      name: "Zigbee2MQTT topic for the remote"
       description: "Usually: zigbee2mqtt/<friendly_name>"
       selector:
         text: {}
 
     target_area:
-      name: Target area (room)
+      name: "Target area (room)"
       selector:
         area: {}
 
     mode_helper:
-      name: "Room mode helper"
+      name: "Room mode helper (input_select: Dag/Kväll/Natt)"
       selector:
         entity:
           domain: input_select
 
     variant_helper:
-      name: Room variant helper (input_number)
+      name: "Room variant helper (input_number)"
       selector:
         entity:
           domain: input_number
 
     evening_flag:
-      name: Global 'Kvällsläge' flag
+      name: "Global 'Kvällsläge' flag"
       description: "input_boolean or binary_sensor. 'on' means evening mode active."
       selector:
         entity: {}
 
     night_flag:
-      name: Global 'Nattläge' flag
+      name: "Global 'Nattläge' flag"
       description: "input_boolean or binary_sensor. 'on' means night mode active."
       selector:
         entity: {}
 
     default_variant:
-      name: Default variant when (re)starting
+      name: "Default variant when (re)starting"
       default: 1
       selector:
         number:
@@ -56,7 +56,7 @@ blueprint:
           mode: box
 
     transition:
-      name: Scene transition (seconds)
+      name: "Scene transition (seconds)"
       default: 0.4
       selector:
         number:
@@ -81,7 +81,6 @@ variables:
   default_variant: !input default_variant
   transition: !input transition
 
-  # Z2M sends JSON with {"action":"on_press"} etc.
   act: >-
     {% set p = trigger.payload_json %}
     {% if p is mapping and 'action' in p %}
@@ -90,12 +89,10 @@ variables:
       {{ trigger.payload }}
     {% endif %}
 
-  # Any light on in the area?
   any_lights_on: >-
     {% set lights = area_entities(area_id) | select('match', '^light\\.') | list %}
     {{ (expand(lights) | selectattr('state','eq','on') | list | count) > 0 }}
 
-  # Default mode from your global flags
   default_mode: >-
     {% if is_state(night_flag, 'on') %}
       Natt
@@ -107,11 +104,9 @@ variables:
 
 action:
   - choose:
-      # on_press = TOGGLE
       - conditions: "{{ act == 'on_press' }}"
         sequence:
           - choose:
-              # If on -> turn off + reset to defaults
               - conditions: "{{ any_lights_on }}"
                 sequence:
                   - service: light.turn_off
@@ -127,8 +122,6 @@ action:
                       entity_id: "{{ variant_helper }}"
                     data:
                       value: "{{ default_variant }}"
-
-              # If off -> set defaults + apply scene (turns lights on via scene)
               - conditions: "{{ not any_lights_on }}"
                 sequence:
                   - service: input_select.select_option
@@ -148,7 +141,6 @@ action:
                       variant_helper: "{{ variant_helper }}"
                       transition: "{{ transition }}"
 
-      # off_press (Hue button) = cycle variant within current mode (wrap)
       - conditions: "{{ act == 'off_press' }}"
         sequence:
           - variables:
@@ -179,11 +171,10 @@ action:
                       variant_helper: "{{ variant_helper }}"
                       transition: "{{ transition }}"
 
-      # up_press = brighter mode (no cycling)
       - conditions: "{{ act == 'up_press' }}"
         sequence:
           - variables:
-              order: ["Natt", "Kväll", "Dag"]  # dimmest -> brightest
+              order: ["Natt", "Kväll", "Dag"]
               cur: "{{ states(mode_helper) }}"
               idx: "{{ order.index(cur) if cur in order else 0 }}"
               new_idx: "{{ [idx + 1, (order | length) - 1] | min }}"
@@ -208,7 +199,6 @@ action:
                       variant_helper: "{{ variant_helper }}"
                       transition: "{{ transition }}"
 
-      # down_press = dimmer mode (no cycling)
       - conditions: "{{ act == 'down_press' }}"
         sequence:
           - variables:
