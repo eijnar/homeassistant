@@ -1,0 +1,273 @@
+blueprint:
+  name: Hue Remote (mode+variant) using Area + Labels
+  description: >
+    Controls scenes by Mode (Dag/Kväll/Natt) + Variant (01/02/03...) for one area.
+    - on_press: toggle (on -> apply current selection, off -> turn off + reset defaults)
+    - off_press: cycle variant (Hue button)
+    - up_press/down_press: switch mode (no cycling at ends)
+    Requires:
+      - input_select for mode with values: Dag, Kväll, Natt
+      - input_number for variant starting at 1
+      - scenes assigned to the area and labeled with Dag/Kväll/Natt
+      - script.apply_mode_variant_scene_for_area (from earlier)
+  domain: automation
+  input:
+    action_entity:
+      name: Remote action entity
+      description: Entity that changes state to on_press/off_press/up_press/down_press
+      selector:
+        entity:
+          domain: sensor
+
+    target_area:
+      name: Target area
+      selector:
+        area: {}
+
+    mode_helper:
+      name: Mode helper (input_select)
+      selector:
+        entity:
+          domain: input_select
+
+    variant_helper:
+      name: Variant helper (input_number)
+      selector:
+        entity:
+          domain: input_number
+
+    transition:
+      name: Scene transition (seconds)
+      default: 0.4
+      selector:
+        number:
+          min: 0
+          max: 10
+          step: 0.1
+          mode: box
+
+    # Defaults on "turn off" (toggle-off)
+    reset_strategy:
+      name: Reset strategy when turning off
+      default: time_of_day
+      selector:
+        select:
+          options:
+            - time_of_day
+            - fixed
+
+    fixed_default_mode:
+      name: Fixed default mode (used if reset_strategy = fixed)
+      default: Kväll
+      selector:
+        select:
+          options:
+            - Natt
+            - Kväll
+            - Dag
+
+    default_variant:
+      name: Default variant on reset
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 10
+          step: 1
+          mode: box
+
+    day_start_hour:
+      name: Day starts at hour
+      default: 6
+      selector:
+        number:
+          min: 0
+          max: 23
+          step: 1
+          mode: box
+
+    evening_start_hour:
+      name: Evening starts at hour
+      default: 18
+      selector:
+        number:
+          min: 0
+          max: 23
+          step: 1
+          mode: box
+
+    night_start_hour:
+      name: Night starts at hour
+      default: 22
+      selector:
+        number:
+          min: 0
+          max: 23
+          step: 1
+          mode: box
+
+mode: single
+
+trigger:
+  - platform: state
+    entity_id: !input action_entity
+
+variables:
+  area_id: !input target_area
+  area_name: "{{ area_name(area_id) }}"   # area_name() accepts area_id :contentReference[oaicite:3]{index=3}
+  mode_helper: !input mode_helper
+  variant_helper: !input variant_helper
+  transition: !input transition
+
+  reset_strategy: !input reset_strategy
+  fixed_default_mode: !input fixed_default_mode
+  default_variant: !input default_variant
+  day_start: !input day_start_hour
+  evening_start: !input evening_start_hour
+  night_start: !input night_start_hour
+
+  act: "{{ trigger.to_state.state if trigger.to_state else '' }}"
+
+  # Determine if any light in the area is currently on
+  any_lights_on: >-
+    {% set lights = area_entities(area_id) | select('match', '^light\\.') | list %}
+    {{ (expand(lights) | selectattr('state','eq','on') | list | count) > 0 }}
+
+  # Default mode calculation for time_of_day strategy
+  time_of_day_mode: >-
+    {% set h = now().hour %}
+    {% if h >= night_start or h < day_start %}
+      Natt
+    {% elif h >= day_start and h < evening_start %}
+      Dag
+    {% else %}
+      Kväll
+    {% endif %}
+
+  default_mode: >-
+    {% if reset_strategy == 'fixed' %}
+      {{ fixed_default_mode }}
+    {% else %}
+      {{ time_of_day_mode }}
+    {% endif %}
+
+action:
+  - choose:
+      # on_press = TOGGLE
+      - conditions: "{{ act == 'on_press' }}"
+        sequence:
+          - choose:
+              # If lights are on -> turn off + reset defaults
+              - conditions: "{{ any_lights_on }}"
+                sequence:
+                  - service: light.turn_off
+                    target:
+                      area_id: "{{ area_id }}"
+                  - service: input_select.select_option
+                    target:
+                      entity_id: "{{ mode_helper }}"
+                    data:
+                      option: "{{ default_mode }}"
+                  - service: input_number.set_value
+                    target:
+                      entity_id: "{{ variant_helper }}"
+                    data:
+                      value: "{{ default_variant }}"
+              # If lights are off -> apply current selection (turns on via scene)
+              - conditions: "{{ not any_lights_on }}"
+                sequence:
+                  - service: script.apply_mode_variant_scene_for_area
+                    data:
+                      area_name: "{{ area_name }}"
+                      mode_helper: "{{ mode_helper }}"
+                      variant_helper: "{{ variant_helper }}"
+                      transition: "{{ transition }}"
+
+      # off_press = HUE BUTTON = cycle variant (wrap)
+      - conditions: "{{ act == 'off_press' }}"
+        sequence:
+          - variables:
+              mode: "{{ states(mode_helper) }}"
+              scenes: >-
+                {{
+                  area_entities(area_id)
+                  | select('in', label_entities(mode))
+                  | select('match', '^scene\\.')
+                  | list
+                  | sort
+                }}
+              maxv: "{{ scenes | length }}"
+              v: "{{ states(variant_helper) | int(1) }}"
+              next_v: "{{ 1 if maxv < 1 else ((v % maxv) + 1) }}"
+          - service: input_number.set_value
+            target:
+              entity_id: "{{ variant_helper }}"
+            data:
+              value: "{{ next_v }}"
+          - choose:
+              - conditions: "{{ any_lights_on }}"
+                sequence:
+                  - service: script.apply_mode_variant_scene_for_area
+                    data:
+                      area_name: "{{ area_name }}"
+                      mode_helper: "{{ mode_helper }}"
+                      variant_helper: "{{ variant_helper }}"
+                      transition: "{{ transition }}"
+
+      # up_press = switch to BRIGHTER mode (no cycling)
+      - conditions: "{{ act == 'up_press' }}"
+        sequence:
+          - variables:
+              order: ["Natt", "Kväll", "Dag"]  # dimmest -> brightest
+              cur: "{{ states(mode_helper) }}"
+              idx: "{{ order.index(cur) if cur in order else 0 }}"
+              new_idx: "{{ [idx + 1, (order | length) - 1] | min }}"
+              new_mode: "{{ order[new_idx] }}"
+          - service: input_select.select_option
+            target:
+              entity_id: "{{ mode_helper }}"
+            data:
+              option: "{{ new_mode }}"
+          - service: input_number.set_value
+            target:
+              entity_id: "{{ variant_helper }}"
+            data:
+              value: 1
+          - choose:
+              - conditions: "{{ any_lights_on }}"
+                sequence:
+                  - service: script.apply_mode_variant_scene_for_area
+                    data:
+                      area_name: "{{ area_name }}"
+                      mode_helper: "{{ mode_helper }}"
+                      variant_helper: "{{ variant_helper }}"
+                      transition: "{{ transition }}"
+
+      # down_press = switch to DIMMER mode (no cycling)
+      - conditions: "{{ act == 'down_press' }}"
+        sequence:
+          - variables:
+              order: ["Natt", "Kväll", "Dag"]
+              cur: "{{ states(mode_helper) }}"
+              idx: "{{ order.index(cur) if cur in order else 0 }}"
+              new_idx: "{{ [idx - 1, 0] | max }}"
+              new_mode: "{{ order[new_idx] }}"
+          - service: input_select.select_option
+            target:
+              entity_id: "{{ mode_helper }}"
+            data:
+              option: "{{ new_mode }}"
+          - service: input_number.set_value
+            target:
+              entity_id: "{{ variant_helper }}"
+            data:
+              value: 1
+          - choose:
+              - conditions: "{{ any_lights_on }}"
+                sequence:
+                  - service: script.apply_mode_variant_scene_for_area
+                    data:
+                      area_name: "{{ area_name }}"
+                      mode_helper: "{{ mode_helper }}"
+                      variant_helper: "{{ variant_helper }}"
+                      transition: "{{ transition }}"
