@@ -162,10 +162,21 @@ action:
         sequence:
           - variables:
               mode: "{{ states(mode_helper) }}"
+              h: "{{ now().hour }}"
+              effective_mode: >-
+                {% if mode == 'Twilight' %}
+                  {% if h >= 6 and h < 12 %}
+                    Morgon
+                  {% else %}
+                    Kväll
+                  {% endif %}
+                {% else %}
+                  {{ mode }}
+                {% endif %}
               scenes: >-
                 {{
                   area_entities(area_id)
-                  | select('in', label_entities(mode))
+                  | select('in', label_entities(effective_mode))
                   | select('match', '^scene\\.')
                   | list
                   | sort
