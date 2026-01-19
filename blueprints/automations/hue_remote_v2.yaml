@@ -1,5 +1,5 @@
 blueprint:
-  name: "Hue Remote V2 - Mode/Variant (Z2M MQTT device triggers, Area + Labels) v0.4.1"
+  name: "Hue Remote V2 - Mode/Variant (Z2M MQTT device triggers, Area + Labels) v0.4.2"
   description: >
     Uses MQTT device triggers discovered via Zigbee2MQTT (type: action, subtype: on_press/off_press/up_press/down_press).
     - on_press: toggle (if lights on -> turn off + reset defaults; if off -> set defaults + apply scene)
@@ -108,7 +108,7 @@ variables:
   # Default mode now comes directly from the global input_select
   default_mode: >-
     {% set m = states(global_mode_helper) %}
-    {% if m in ['Dag','Morgon','Kväll','Natt'] %}
+    {% if m in ['Dag','Twilight','Natt','Morgon','Kväll'] %}
       {{ m }}
     {% else %}
       Dag
@@ -192,7 +192,7 @@ action:
       - conditions: "{{ trigger.id == 'up_press' }}"
         sequence:
           - variables:
-              order: ["Natt", "Kväll", "Morgon", "Dag"]
+              order: ["Natt", "Twilight", "Dag"]
               cur: "{{ states(mode_helper) }}"
               idx: "{{ order.index(cur) if cur in order else 0 }}"
               new_idx: "{{ [idx + 1, (order | length) - 1] | min }}"
@@ -221,7 +221,7 @@ action:
       - conditions: "{{ trigger.id == 'down_press' }}"
         sequence:
           - variables:
-              order: ["Natt", "Kväll", "Morgon", "Dag"]
+              order: ["Natt", "Twilight", "Dag"]
               cur: "{{ states(mode_helper) }}"
               idx: "{{ order.index(cur) if cur in order else 0 }}"
               new_idx: "{{ [idx - 1, 0] | max }}"
