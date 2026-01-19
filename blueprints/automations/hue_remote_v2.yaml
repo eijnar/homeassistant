@@ -1,5 +1,5 @@
 blueprint:
-  name: "Hue Remote V2 - Mode/Variant (Z2M MQTT device triggers, Area + Labels) v0.4"
+  name: "Hue Remote V2 - Mode/Variant (Z2M MQTT device triggers, Area + Labels) v0.4.1"
   description: >
     Uses MQTT device triggers discovered via Zigbee2MQTT (type: action, subtype: on_press/off_press/up_press/down_press).
     - on_press: toggle (if lights on -> turn off + reset defaults; if off -> set defaults + apply scene)
